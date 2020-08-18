@@ -57,25 +57,25 @@ const unsigned int BTN[BTN_COUNT] = {
     BTN_B,
     BTN_X,
     BTN_Y,
-    BTN_TL, // TL2?
+    BTN_TL,
     BTN_TR,
     BTN_SELECT,
     BTN_START,
-    BTN_TASK, // XBOX button?
+    BTN_MODE,
     BTN_THUMBL,
     BTN_THUMBR
 };
 
 #define AXIS_COUNT 8
 const unsigned int AXIS[AXIS_COUNT] = {
+    ABS_X,
+    ABS_Y,
+    ABS_Z,
+    ABS_RX,
+    ABS_RY,
+    ABS_RZ,
     ABS_HAT0X,
-    ABS_HAT0Y,
-    ABS_BRAKE, // left trigger
-    ABS_HAT1X,
-    ABS_HAT1Y,
-    ABS_GAS, // right trigger
-    ABS_HAT2X,
-    ABS_HAT2Y
+    ABS_HAT0Y
 };
 
 static void help()
@@ -163,7 +163,12 @@ static void on_message(struct mosquitto *mosq, void *user_obj, const struct mosq
         json_object_put(obj);
         return;
     }
-    int type = json_object_get_int(field);
+    const char* type = json_object_get_string(field);
+    if (json_object_get_string_len(field) == 0) {
+        fprintf(stderr, "Invalid `type` field\n");
+        json_object_put(obj);
+        return;
+    }
 
     if (!json_object_object_get_ex(obj, "number", &field)) {
         fprintf(stderr, "Missing key `number`\n");
@@ -172,13 +177,12 @@ static void on_message(struct mosquitto *mosq, void *user_obj, const struct mosq
     }
     int number = json_object_get_int(field);
 
-    // Release object
-    json_object_put(obj);
-
     // Debug
-    fprintf(stderr, "%d, %d, %d\n", value, type, number);
+    if (debug) {
+        fprintf(stderr, "%d, %s, %d\n", value, type, number);
+    }
 
-    if (type == JS_EVENT_BUTTON) {
+    if (!strcmp(type, "button")) {
         if (number < 0 || number >= BTN_COUNT) {
             fprintf(stderr, "Invalid button number: %d\n", number);
         } else {
@@ -189,7 +193,7 @@ static void on_message(struct mosquitto *mosq, void *user_obj, const struct mosq
             }
             libevdev_uinput_write_event(uidev, EV_SYN, SYN_REPORT, 0);
         }
-    } else if (type == JS_EVENT_AXIS) {
+    } else if (!strcmp(type, "axis")) {
         if (number < 0 || number >= AXIS_COUNT) {
             fprintf(stderr, "Invalid axis number: %d\n", number);
         } else {
@@ -201,9 +205,11 @@ static void on_message(struct mosquitto *mosq, void *user_obj, const struct mosq
             libevdev_uinput_write_event(uidev, EV_SYN, SYN_REPORT, 0);
         }
     } else {
-        fprintf(stderr, "Invalid event `type`: %d\n", type);
+        fprintf(stderr, "Invalid event `type`: %s\n", type);
     }
 
+    // Release object
+    json_object_put(obj);
 }
 
 int main(int argc, char *argv[])
@@ -301,8 +307,16 @@ int main(int argc, char *argv[])
             libevdev_enable_event_code(dev, EV_KEY, BTN[i], NULL);
         }
         libevdev_enable_event_type(dev, EV_ABS);
+        struct input_absinfo info = {
+            .value = 0,
+            .minimum = -32767,
+            .maximum = 32768,
+            .fuzz = 0,
+            .flat = 0,
+            .resolution = 1
+        };
         for (int i = 0; i < AXIS_COUNT; i++) {
-            libevdev_enable_event_code(dev, EV_ABS, AXIS[i], NULL);
+            libevdev_enable_event_code(dev, EV_ABS, AXIS[i], &info);
         }
         err = libevdev_uinput_create_from_device(dev,
                                                 LIBEVDEV_UINPUT_OPEN_MANAGED,
